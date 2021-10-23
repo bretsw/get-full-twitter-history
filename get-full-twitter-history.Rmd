@@ -1,0 +1,168 @@
+---
+title: "Script for using the Academic Twitter API to Collect Tweets"
+author: "K. Bret Staudt Willet"
+date: "`r Sys.time()`"
+---
+
+# Get set up
+
+This section loads the data and packages and starts to process the data.
+
+```{r packages, include=FALSE}
+library(tidyverse)
+library(anytime)
+library(lubridate)
+library(beepr)
+library(devtools)
+
+devtools::install_github("cjbarrie/academictwitteR")
+library(academictwitteR)
+
+devtools::install_github("bretsw/tidytags")
+library(tidytags)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+usethis::use_git_ignore(c("*.csv", "*.rds", "*.log", "*.json"))
+```
+
+```{r, eval=FALSE}
+tweets_raw <- 
+        academictwitteR::get_all_tweets(
+                query = "#udl",  # this query is not case sensitive
+                n = 1500000,  # the script seems to really slow down past 1.5 million tweets
+                page_n = 500,
+                start_tweet = "2006-03-21T00:00:00Z", # day of Twitter's launch
+                end_tweets = "2021-10-01T00:00:00Z",
+                bearer_token = Sys.getenv("TWITTER_BEARER_TOKEN"), 
+                data_path = "data-udl/",
+                bind_tweets = FALSE  # this saves strain on RAM but just storying to .json files, not keeping in the R environment
+                )
+beepr::beep(8)
+```
+
+```{r, eval=FALSE}
+# this brings all the saved .json files into R, in a tidy format
+tweets_loaded <- 
+        academictwitteR::bind_tweets(data_path = "data-udl/", 
+                                     output_format = "tidy")
+beepr::beep(8)
+```
+
+```{r, eval=FALSE}
+# this just pulls out the tweet IDs and saves them for easy retrieval
+tweet_id_vector <- tweets_loaded %>% select(tweet_id)
+write_csv(tweet_id_vector, file = "ids/ids-udl.csv")
+```
+
+```{r, eval=FALSE}
+ids_reloaded <- read_csv("ids/ids-udl.csv", col_types = 'c')
+```
+
+```{r, eval=FALSE, message=FALSE}
+# this gets full tweet metadata, pausing automatically for the Twitter API rate limits
+tweets_full <- 
+        tidytags::lookup_many_tweets(ids_reloaded$tweet_id,
+                                     alarm = TRUE)
+
+saveRDS(tweets_full, "Rds/tweets-udl.Rds")  # saving the .Rds means you only have to run the slow part once
+beepr::beep(8)
+```
+
+# Analysis
+
+```{r}
+tweets0 <- readRDS("Rds/tweets-udl.Rds")
+```
+
+```{r}
+tweets <-  
+        tweets0 %>%
+        mutate(created_at = created_at %>% 
+                       as.numeric() %>% 
+                       anytime(asUTC = TRUE) %>% 
+                       as_datetime %>%
+                       ymd_hms() %>%
+                       with_tz(tzone = "US/Eastern")
+        ) %>%
+        mutate(has_question = ifelse(grepl("\\? ", text), TRUE, FALSE),
+               date = floor_date(created_at, 'day')
+        )
+rm(tweets0)
+```
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+tweet_dates <- tweets %>% count(date)
+
+# plots all tweets over time
+ggplot(tweet_dates, aes(x = date, y = n)) +
+        geom_point(alpha = 0.25) + 
+        geom_smooth() +
+        # adds a line for the day COVID-19 was declared a global pandemic
+        geom_vline(aes(xintercept = as.POSIXct("2020-03-11")), 
+                   color = 'green') + 
+        xlab(NULL) +
+        ylab("Number of Tweets") +
+        ggtitle("#udl tweets") +
+        theme_bw()
+```
+
+```{r, include=FALSE}
+ggsave(file="output/udl-all.png", width=8, height=4.5)
+```
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+question_dates <- 
+        tweets %>% 
+        filter(!is_retweet,
+               has_question) %>%
+        count(date)
+
+# plots question tweets over time
+ggplot(question_dates, aes(x = date, y = n)) +
+        geom_point(alpha = 0.25) + 
+        geom_smooth() +
+        geom_vline(aes(xintercept = as.POSIXct("2020-03-11")),
+                   color = 'green') + 
+        xlab(NULL) +
+        ylab("Number of Question Tweets") +
+        ggtitle("#udl question tweets") +
+        theme_bw()
+```
+
+```{r, include=FALSE}
+ggsave(file="output/udl-questions.png", width=8, height=4.5)
+```
+
+```{r, message=FALSE}
+dates_by_type <- 
+  tweets %>% 
+  count(date, is_retweet) %>%
+  mutate(type = ifelse(is_retweet, 
+                       'retweets', 
+                       'original tweets')
+         )
+
+# plots original tweets and retweets over time
+ggplot(dates_by_type, aes(x = date, y = n, color = type)) +
+  geom_point(alpha = 0.25) + 
+  geom_smooth() +
+  scale_colour_brewer(palette = "Set1") +
+  geom_vline(aes(xintercept = as.POSIXct("2020-03-11")),
+             color = 'green') + 
+  xlab(NULL) +
+  ylab("Number of Tweets") +
+  ggtitle("#udl tweets") +
+  theme_bw()
+```
+
+```{r, include=FALSE}
+ggsave(file="output/udl-by-type.png", width=8, height=4.5)
+```
+
+# Version/dependencies
+
+```{r session-info}
+sessionInfo()
+```

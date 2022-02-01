@@ -18,7 +18,7 @@ library(devtools)
 devtools::install_github("cjbarrie/academictwitteR")
 library(academictwitteR)
 
-devtools::install_github("bretsw/tidytags")
+install.packages("tidytags", repos = "https://ropensci.r-universe.dev")
 library(tidytags)
 ```
 
